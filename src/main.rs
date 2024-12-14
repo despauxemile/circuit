@@ -93,9 +93,7 @@ fn main() {
     let elts: Vec<Element> = Vec::from([
         VSource(0, 1, 5.0).into(),
         Resistor(1, 2, 10).into(),
-        //VSource(2, 3, 0.0).into(),
         Capacitor::new(2, 3, 0.00001).into(),
-        //Resistor(2, 3, 10).into(),
         Resistor(3, 0, 10).into(),
         Resistor(2, 4, 10).into(),
         Inductor::new(4, 5, 1.0).into(),
