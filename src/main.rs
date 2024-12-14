@@ -2,20 +2,50 @@ use std::collections::BTreeSet;
 
 use nalgebra::{DMatrix, DVector};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Resistor (usize, usize, u32);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct VSource (usize, usize, f64);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct ISource (usize, usize, f64);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+struct Capacitor {
+    n1: usize,
+    n2: usize,
+    c: f64,
+    inner_v: f64,
+}
+
+impl Capacitor {
+    pub fn new(n1: usize, n2: usize, c: f64) -> Self {
+        Self { n1, n2, c, inner_v: 0.0 }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Inductor {
+    n1: usize,
+    n2: usize,
+    l: f64,
+    inner_i: f64,
+}
+
+impl Inductor {
+    pub fn new(n1: usize, n2: usize, l: f64) -> Self {
+        Self { n1, n2, l, inner_i: 0.0 }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 enum Element {
     Resistor(Resistor),
     VSource(VSource),
     ISource(ISource),
+    Capacitor(Capacitor),
+    Inductor(Inductor),
 }
 
 impl Element {
@@ -24,6 +54,8 @@ impl Element {
             Element::Resistor(resistor) => vec!(resistor.0, resistor.1),
             Element::VSource(vsource) => vec!(vsource.0, vsource.1),
             Element::ISource(isource) => vec!(isource.0, isource.1),
+            Element::Capacitor(capacitor) => vec!(capacitor.n1, capacitor.n2),
+            Element::Inductor(inductor) => vec!(inductor.n1, inductor.n2),
         }
     }
 }
@@ -44,18 +76,34 @@ impl From<ISource> for Element {
     }
 }
 
+impl From<Capacitor> for Element {
+    fn from(value: Capacitor) -> Self {
+        Self::Capacitor(value)
+    }
+}
+
+impl From<Inductor> for Element {
+    fn from(value: Inductor) -> Self {
+        Self::Inductor(value)
+    }
+}
+
 fn main() {
 
     let elts: Vec<Element> = Vec::from([
-        Resistor(1, 2, 5).into(),
-        Resistor(2, 0, 3).into(),
-        Resistor(3, 0, 10).into(),
         VSource(0, 1, 5.0).into(),
-        VSource(2, 3, 10.0).into(),
-        ISource(1, 2, 2.0).into(),
+        Resistor(1, 2, 10).into(),
+        //VSource(2, 3, 0.0).into(),
+        Capacitor::new(2, 3, 0.00001).into(),
+        //Resistor(2, 3, 10).into(),
+        Resistor(3, 0, 10).into(),
+        Resistor(2, 4, 10).into(),
+        Inductor::new(4, 5, 1.0).into(),
+        Resistor(5, 3, 10).into(),
     ]);
 
-    let res = solve_dc(&elts);
+    let eq = apply_dc_equivalences(&elts);
+    let res = solve_dc(&eq);
 
     println!("node voltages: {:?}", res);
 
@@ -74,16 +122,26 @@ fn create_nodes_set(elements: &[Element]) -> BTreeSet<usize> {
     return nodes;
 }
 
+fn apply_dc_equivalences(elements: &[Element]) -> Vec<Element> {
+
+    let out: Vec<Element> = elements.iter().map(|elt| {
+        match elt {
+            Element::Capacitor(capacitor) => {
+                Element::ISource(ISource(capacitor.n1, capacitor.n2, 0.0).into())
+            },
+            Element::Inductor(inductor) => {
+                Element::VSource(VSource(inductor.n1, inductor.n2, 0.0).into())
+            },
+            _ => *elt,
+        }
+    }).collect::<Vec<_>>();
+
+    return out;
+}
+
 fn solve_dc(elements: &[Element]) -> Vec<f64> {
     let mut nodes = create_nodes_set(elements);
     let ref_node = nodes.pop_first().expect("node list is empty");
-
-    let nb_elt_nodes = elements.iter().filter(|&elt| {
-        match elt {
-            Element::Resistor(_) => true,
-            _ => false,
-        }
-    }).collect::<Vec<_>>().len();
 
     let nb_vsources = elements.iter().filter(|&elt| {
         match elt {
@@ -92,15 +150,14 @@ fn solve_dc(elements: &[Element]) -> Vec<f64> {
         }
     }).collect::<Vec<_>>().len();
 
-    let mut g_m = DMatrix::<f64>::zeros(nb_elt_nodes, nb_elt_nodes);
-    let mut b_m = DMatrix::<f64>::zeros(nb_elt_nodes, nb_vsources);
+    let mut g_m = DMatrix::<f64>::zeros(nodes.len(), nodes.len());
+    let mut b_m = DMatrix::<f64>::zeros(nodes.len(), nb_vsources);
     let d_m = DMatrix::<f64>::zeros(nb_vsources, nb_vsources);
 
-    let mut z_v = DVector::<f64>::zeros(nb_elt_nodes + nb_vsources);
+    let mut z_v = DVector::<f64>::zeros(nodes.len() + nb_vsources);
 
     let mut vsource_idx = 0usize;
     for elt in elements {
-
         match elt {
             Element::Resistor(resistor) => {
                 let Resistor(n1, n2, r_val) = *resistor;
@@ -138,7 +195,7 @@ fn solve_dc(elements: &[Element]) -> Vec<f64> {
                     b_m[(n_pos_idx, vsource_idx)] = 1.0;
                 }
 
-                z_v[nb_elt_nodes + vsource_idx] = v_val;
+                z_v[nodes.len() + vsource_idx] = v_val;
 
                 vsource_idx += 1;
             },
@@ -156,7 +213,7 @@ fn solve_dc(elements: &[Element]) -> Vec<f64> {
                     z_v[n_pos_idx] = i_val;
                 }
             },
-            //_ => todo!()
+            _ => unimplemented!()
         }
 
     }
